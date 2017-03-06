@@ -6,13 +6,16 @@ package fastcgi
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/mholt/caddy"
 	"github.com/mholt/caddy/caddyhttp/httpserver"
 )
 
@@ -21,7 +24,6 @@ type Handler struct {
 	Next    httpserver.Handler
 	Rules   []Rule
 	Root    string
-	AbsRoot string // same as root, but absolute path
 	FileSys http.FileSystem
 
 	// These are sent to CGI scripts in env variables
@@ -30,6 +32,11 @@ type Handler struct {
 	ServerName      string
 	ServerPort      string
 }
+
+// When a rewrite is performed, a header field of this name
+// is added to the request
+// It contains the original request URI before the rewrite.
+const internalRewriteFieldName = "Caddy-Rewrite-Original-URI"
 
 // ServeHTTP satisfies the httpserver.Handler interface.
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
@@ -72,11 +79,16 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 			}
 
 			// Connect to FastCGI gateway
-			network, address := rule.parseAddress()
-			fcgiBackend, err := Dial(network, address)
+			fcgiBackend, err := rule.dialer.Dial()
 			if err != nil {
+				if err, ok := err.(net.Error); ok && err.Timeout() {
+					return http.StatusGatewayTimeout, err
+				}
 				return http.StatusBadGateway, err
 			}
+			defer fcgiBackend.Close()
+			fcgiBackend.SetReadTimeout(rule.ReadTimeout)
+			fcgiBackend.SetSendTimeout(rule.SendTimeout)
 
 			var resp *http.Response
 			contentLength, _ := strconv.Atoi(r.Header.Get("Content-Length"))
@@ -91,12 +103,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 				resp, err = fcgiBackend.Post(env, r.Method, r.Header.Get("Content-Type"), r.Body, contentLength)
 			}
 
-			if resp.Body != nil {
-				defer resp.Body.Close()
-			}
-
-			if err != nil && err != io.EOF {
-				return http.StatusBadGateway, err
+			if err != nil {
+				if err, ok := err.(net.Error); ok && err.Timeout() {
+					return http.StatusGatewayTimeout, err
+				} else if err != io.EOF {
+					return http.StatusBadGateway, err
+				}
 			}
 
 			// Write response header
@@ -109,9 +121,9 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 			}
 
 			// Log any stderr output from upstream
-			if fcgiBackend.stderr.Len() != 0 {
+			if stderr := fcgiBackend.StdErr(); stderr.Len() != 0 {
 				// Remove trailing newline, error logger already does this.
-				err = LogError(strings.TrimSuffix(fcgiBackend.stderr.String(), "\n"))
+				err = LogError(strings.TrimSuffix(stderr.String(), "\n"))
 			}
 
 			// Normally we would return the status code if it is an error status (>= 400),
@@ -127,28 +139,28 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 	return h.Next.ServeHTTP(w, r)
 }
 
-// parseAddress returns the network and address of r.
+// parseAddress returns the network and address of fcgiAddress.
 // The first string is the network, "tcp" or "unix", implied from the scheme and address.
-// The second string is r.Address, with scheme prefixes removed.
+// The second string is fcgiAddress, with scheme prefixes removed.
 // The two returned strings can be used as parameters to the Dial() function.
-func (r Rule) parseAddress() (string, string) {
+func parseAddress(fcgiAddress string) (string, string) {
 	// check if address has tcp scheme explicitly set
-	if strings.HasPrefix(r.Address, "tcp://") {
-		return "tcp", r.Address[len("tcp://"):]
+	if strings.HasPrefix(fcgiAddress, "tcp://") {
+		return "tcp", fcgiAddress[len("tcp://"):]
 	}
 	// check if address has fastcgi scheme explicitly set
-	if strings.HasPrefix(r.Address, "fastcgi://") {
-		return "tcp", r.Address[len("fastcgi://"):]
+	if strings.HasPrefix(fcgiAddress, "fastcgi://") {
+		return "tcp", fcgiAddress[len("fastcgi://"):]
 	}
 	// check if unix socket
-	if trim := strings.HasPrefix(r.Address, "unix"); strings.HasPrefix(r.Address, "/") || trim {
+	if trim := strings.HasPrefix(fcgiAddress, "unix"); strings.HasPrefix(fcgiAddress, "/") || trim {
 		if trim {
-			return "unix", r.Address[len("unix:"):]
+			return "unix", fcgiAddress[len("unix:"):]
 		}
-		return "unix", r.Address
+		return "unix", fcgiAddress
 	}
 	// default case, a plain tcp address with no scheme
-	return "tcp", r.Address
+	return "tcp", fcgiAddress
 }
 
 func writeHeader(w http.ResponseWriter, r *http.Response) {
@@ -172,7 +184,7 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 	var env map[string]string
 
 	// Get absolute path of requested resource
-	absPath := filepath.Join(h.AbsRoot, fpath)
+	absPath := filepath.Join(rule.Root, fpath)
 
 	// Separate remote IP and port; more lenient than net.SplitHostPort
 	var ip, port string
@@ -204,12 +216,14 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 	// or it might have been rewritten internally by the rewrite middleware (see issue #256).
 	// If it was rewritten, there will be a header indicating the original URL,
 	// which is needed to get the correct RequestURI value for PHP apps.
-	const internalRewriteFieldName = "Caddy-Rewrite-Original-URI"
 	reqURI := r.URL.RequestURI()
 	if origURI := r.Header.Get(internalRewriteFieldName); origURI != "" {
 		reqURI = origURI
-		r.Header.Del(internalRewriteFieldName)
 	}
+
+	// Retrieve name of remote user that was set by some downstream middleware,
+	// possibly basicauth.
+	remoteUser, _ := r.Context().Value(caddy.CtxKey("remote_user")).(string) // Blank if not set
 
 	// Some variables are unused but cleared explicitly to prevent
 	// the parent environment from interfering.
@@ -226,7 +240,7 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 		"REMOTE_HOST":       ip, // For speed, remote host lookups disabled
 		"REMOTE_PORT":       port,
 		"REMOTE_IDENT":      "", // Not used
-		"REMOTE_USER":       "", // Not used
+		"REMOTE_USER":       remoteUser,
 		"REQUEST_METHOD":    r.Method,
 		"SERVER_NAME":       h.ServerName,
 		"SERVER_PORT":       h.ServerPort,
@@ -234,7 +248,7 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 		"SERVER_SOFTWARE":   h.SoftwareName + "/" + h.SoftwareVersion,
 
 		// Other variables
-		"DOCUMENT_ROOT":   h.AbsRoot,
+		"DOCUMENT_ROOT":   rule.Root,
 		"DOCUMENT_URI":    docURI,
 		"HTTP_HOST":       r.Host, // added here, since not always part of headers
 		"REQUEST_URI":     reqURI,
@@ -246,7 +260,7 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 	// should only exist if PATH_INFO is defined.
 	// Info: https://www.ietf.org/rfc/rfc3875 Page 14
 	if env["PATH_INFO"] != "" {
-		env["PATH_TRANSLATED"] = filepath.Join(h.AbsRoot, pathInfo) // Info: http://www.oreilly.com/openbook/cgi/ch02_04.html
+		env["PATH_TRANSLATED"] = filepath.Join(rule.Root, pathInfo) // Info: http://www.oreilly.com/openbook/cgi/ch02_04.html
 	}
 
 	// Some web apps rely on knowing HTTPS or not
@@ -261,17 +275,20 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 		env[envVar[0]] = replacer.Replace(envVar[1])
 	}
 
-	// Add all HTTP headers to env variables
+	// Add all HTTP headers (except Caddy-Rewrite-Original-URI ) to env variables
 	for field, val := range r.Header {
+		if strings.ToLower(field) == strings.ToLower(internalRewriteFieldName) {
+			continue
+		}
 		header := strings.ToUpper(field)
 		header = headerNameReplacer.Replace(header)
 		env["HTTP_"+header] = strings.Join(val, ", ")
 	}
-
 	return env, nil
 }
 
 // Rule represents a FastCGI handling rule.
+// It is parsed from the fastcgi directive in the Caddyfile, see setup.go.
 type Rule struct {
 	// The base path to match. Required.
 	Path string
@@ -281,6 +298,10 @@ type Rule struct {
 
 	// Always process files with this extension with fastcgi.
 	Ext string
+
+	// Use this directory as the fastcgi root directory. Defaults to the root
+	// directory of the parent virtual host.
+	Root string
 
 	// The path in the URL will be split into two, with the first piece ending
 	// with the value of SplitPath. The first piece will be assumed as the
@@ -297,6 +318,15 @@ type Rule struct {
 
 	// Ignored paths
 	IgnoredSubPaths []string
+
+	// The duration used to set a deadline when reading from the FastCGI server.
+	ReadTimeout time.Duration
+
+	// The duration used to set a deadline when sending to the FastCGI server.
+	SendTimeout time.Duration
+
+	// FCGI dialer
+	dialer dialer
 }
 
 // canSplit checks if path can split into two based on rule.SplitPath.

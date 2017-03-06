@@ -60,13 +60,13 @@ func TestRoundRobinPolicy(t *testing.T) {
 		t.Error("Expected third round robin host to be first host in the pool.")
 	}
 	// mark host as down
-	pool[1].Unhealthy = true
+	pool[1].Unhealthy = 1
 	h = rrPolicy.Select(pool, request)
 	if h != pool[2] {
 		t.Error("Expected to skip down host.")
 	}
 	// mark host as up
-	pool[1].Unhealthy = false
+	pool[1].Unhealthy = 0
 
 	h = rrPolicy.Select(pool, request)
 	if h == pool[2] {
@@ -161,29 +161,29 @@ func TestIPHashPolicy(t *testing.T) {
 	// we should get a healthy host if the original host is unhealthy and a
 	// healthy host is available
 	request.RemoteAddr = "172.0.0.1"
-	pool[1].Unhealthy = true
+	pool[1].Unhealthy = 1
 	h = ipHash.Select(pool, request)
-	if h != pool[0] {
-		t.Error("Expected ip hash policy host to be the first host.")
+	if h != pool[2] {
+		t.Error("Expected ip hash policy host to be the third host.")
 	}
 
 	request.RemoteAddr = "172.0.0.2"
 	h = ipHash.Select(pool, request)
-	if h != pool[1] {
-		t.Error("Expected ip hash policy host to be the second host.")
+	if h != pool[2] {
+		t.Error("Expected ip hash policy host to be the third host.")
 	}
-	pool[1].Unhealthy = false
+	pool[1].Unhealthy = 0
 
 	request.RemoteAddr = "172.0.0.3"
-	pool[2].Unhealthy = true
+	pool[2].Unhealthy = 1
 	h = ipHash.Select(pool, request)
 	if h != pool[0] {
 		t.Error("Expected ip hash policy host to be the first host.")
 	}
 	request.RemoteAddr = "172.0.0.4"
 	h = ipHash.Select(pool, request)
-	if h != pool[0] {
-		t.Error("Expected ip hash policy host to be the first host.")
+	if h != pool[1] {
+		t.Error("Expected ip hash policy host to be the second host.")
 	}
 
 	// We should be able to resize the host pool and still be able to predict
@@ -219,8 +219,8 @@ func TestIPHashPolicy(t *testing.T) {
 	}
 
 	// We should get nil when there are no healthy hosts
-	pool[0].Unhealthy = true
-	pool[1].Unhealthy = true
+	pool[0].Unhealthy = 1
+	pool[1].Unhealthy = 1
 	h = ipHash.Select(pool, request)
 	if h != nil {
 		t.Error("Expected ip hash policy host to be nil.")

@@ -1,11 +1,12 @@
 package proxy
 
 import (
-	"github.com/mholt/caddy/caddyfile"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mholt/caddy/caddyfile"
 )
 
 func TestNewHost(t *testing.T) {
@@ -35,12 +36,12 @@ func TestNewHost(t *testing.T) {
 		t.Error("Expected new host not to be down.")
 	}
 	// mark Unhealthy
-	uh.Unhealthy = true
+	uh.Unhealthy = 1
 	if !uh.CheckDown(uh) {
 		t.Error("Expected unhealthy host to be down.")
 	}
 	// mark with Fails
-	uh.Unhealthy = false
+	uh.Unhealthy = 0
 	uh.Fails = 1
 	if !uh.CheckDown(uh) {
 		t.Error("Expected failed host to be down.")
@@ -73,13 +74,13 @@ func TestSelect(t *testing.T) {
 		MaxFails:    1,
 	}
 	r, _ := http.NewRequest("GET", "/", nil)
-	upstream.Hosts[0].Unhealthy = true
-	upstream.Hosts[1].Unhealthy = true
-	upstream.Hosts[2].Unhealthy = true
+	upstream.Hosts[0].Unhealthy = 1
+	upstream.Hosts[1].Unhealthy = 1
+	upstream.Hosts[2].Unhealthy = 1
 	if h := upstream.Select(r); h != nil {
 		t.Error("Expected select to return nil as all host are down")
 	}
-	upstream.Hosts[2].Unhealthy = false
+	upstream.Hosts[2].Unhealthy = 0
 	if h := upstream.Select(r); h == nil {
 		t.Error("Expected select to not return nil")
 	}
@@ -197,7 +198,7 @@ func TestParseBlock(t *testing.T) {
 		{"proxy / localhost:8080 {\n transparent \n}"},
 
 		// Test #2: transparent preset with another param
-		{"proxy / localhost:8080 {\n transparent \nproxy_header X-Test Tester \n}"},
+		{"proxy / localhost:8080 {\n transparent \nheader_upstream X-Test Tester \n}"},
 
 		// Test #3: transparent preset on multiple sites
 		{"proxy / localhost:8080 {\n transparent \n} \nproxy /api localhost:8081 { \ntransparent \n}"},

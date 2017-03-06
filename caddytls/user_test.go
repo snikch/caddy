@@ -7,11 +7,13 @@ import (
 	"crypto/rand"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/xenolf/lego/acme"
 	"os"
+
+	"github.com/xenolf/lego/acme"
 )
 
 func TestUser(t *testing.T) {
@@ -120,7 +122,7 @@ func TestGetUserAlreadyExists(t *testing.T) {
 }
 
 func TestGetEmail(t *testing.T) {
-	storageBasePath = string(testStorage) // to contain calls that create a new Storage...
+	storageBasePath = testStorage.Path // to contain calls that create a new Storage...
 
 	// let's not clutter up the output
 	origStdout := os.Stdout
@@ -164,12 +166,12 @@ func TestGetEmail(t *testing.T) {
 			t.Fatalf("Error saving user %d: %v", i, err)
 		}
 
-		// Change modified time so they're all different, so the test becomes deterministic
+		// Change modified time so they're all different and the test becomes more deterministic
 		f, err := os.Stat(testStorage.user(eml))
 		if err != nil {
 			t.Fatalf("Could not access user folder for '%s': %v", eml, err)
 		}
-		chTime := f.ModTime().Add(-(time.Duration(i) * time.Second))
+		chTime := f.ModTime().Add(-(time.Duration(i) * time.Hour)) // 1 second isn't always enough space!
 		if err := os.Chtimes(testStorage.user(eml), chTime, chTime); err != nil {
 			t.Fatalf("Could not change user folder mod time for '%s': %v", eml, err)
 		}
@@ -180,8 +182,8 @@ func TestGetEmail(t *testing.T) {
 	}
 }
 
-var testStorage = FileStorage("./testdata")
+var testStorage = &FileStorage{Path: "./testdata", nameLocks: make(map[string]*sync.WaitGroup)}
 
-func (s FileStorage) clean() error {
-	return os.RemoveAll(string(s))
+func (s *FileStorage) clean() error {
+	return os.RemoveAll(s.Path)
 }

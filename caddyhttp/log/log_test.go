@@ -3,7 +3,6 @@ package log
 import (
 	"bytes"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +27,7 @@ func TestLoggedStatus(t *testing.T) {
 		PathScope: "/",
 		Entries: []*Entry{{
 			Format: DefaultLogFormat + " {testval}",
-			Log:    log.New(&f, "", 0),
+			Log:    httpserver.NewTestLogger(&f),
 		}},
 	}
 
@@ -71,7 +70,7 @@ func TestLogRequestBody(t *testing.T) {
 			PathScope: "/",
 			Entries: []*Entry{{
 				Format: "{request_body}",
-				Log:    log.New(&got, "", 0),
+				Log:    httpserver.NewTestLogger(&got),
 			}},
 		}},
 		Next: httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
@@ -104,10 +103,7 @@ func TestLogRequestBody(t *testing.T) {
 		},
 	} {
 		got.Reset()
-		r, err := http.NewRequest("POST", "/", bytes.NewBufferString(c.body))
-		if err != nil {
-			t.Fatal(err)
-		}
+		r := httptest.NewRequest("POST", "/", bytes.NewBufferString(c.body))
 		r.Header.Set("Content-Type", "application/json")
 		status, err := logger.ServeHTTP(httptest.NewRecorder(), r)
 		if status != 0 {
@@ -133,11 +129,11 @@ func TestMultiEntries(t *testing.T) {
 			Entries: []*Entry{
 				{
 					Format: "foo {request_body}",
-					Log:    log.New(&got1, "", 0),
+					Log:    httpserver.NewTestLogger(&got1),
 				},
 				{
 					Format: "{method} {request_body}",
-					Log:    log.New(&got2, "", 0),
+					Log:    httpserver.NewTestLogger(&got2),
 				},
 			},
 		}},

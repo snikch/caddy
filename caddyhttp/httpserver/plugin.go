@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ func init() {
 	flag.StringVar(&Host, "host", DefaultHost, "Default host")
 	flag.StringVar(&Port, "port", DefaultPort, "Default port")
 	flag.StringVar(&Root, "root", DefaultRoot, "Root path of default site")
-	flag.DurationVar(&GracefulTimeout, "grace", 5*time.Second, "Maximum duration of graceful shutdown") // TODO
+	flag.DurationVar(&GracefulTimeout, "grace", 5*time.Second, "Maximum duration of graceful shutdown")
 	flag.BoolVar(&HTTP2, "http2", true, "Use HTTP/2")
 	flag.BoolVar(&QUIC, "quic", false, "Use experimental QUIC")
 
@@ -44,8 +45,33 @@ func init() {
 		NewContext: newContext,
 	})
 	caddy.RegisterCaddyfileLoader("short", caddy.LoaderFunc(shortCaddyfileLoader))
+	caddy.RegisterParsingCallback(serverType, "root", hideCaddyfile)
 	caddy.RegisterParsingCallback(serverType, "tls", activateHTTPS)
 	caddytls.RegisterConfigGetter(serverType, func(c *caddy.Controller) *caddytls.Config { return GetConfig(c).TLS })
+}
+
+// hideCaddyfile hides the source/origin Caddyfile if it is within the
+// site root. This function should be run after parsing the root directive.
+func hideCaddyfile(cctx caddy.Context) error {
+	ctx := cctx.(*httpContext)
+	for _, cfg := range ctx.siteConfigs {
+		// if no Caddyfile exists exit.
+		if cfg.originCaddyfile == "" {
+			return nil
+		}
+		absRoot, err := filepath.Abs(cfg.Root)
+		if err != nil {
+			return err
+		}
+		absOriginCaddyfile, err := filepath.Abs(cfg.originCaddyfile)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(absOriginCaddyfile, absRoot) {
+			cfg.HiddenFiles = append(cfg.HiddenFiles, strings.TrimPrefix(absOriginCaddyfile, absRoot))
+		}
+	}
+	return nil
 }
 
 func newContext() caddy.Context {
@@ -95,10 +121,10 @@ func (h *httpContext) InspectServerBlocks(sourceFile string, serverBlocks []cadd
 
 			// Save the config to our master list, and key it for lookups
 			cfg := &SiteConfig{
-				Addr:        addr,
-				Root:        Root,
-				TLS:         &caddytls.Config{Hostname: addr.Host},
-				HiddenFiles: []string{sourceFile},
+				Addr:            addr,
+				Root:            Root,
+				TLS:             &caddytls.Config{Hostname: addr.Host},
+				originCaddyfile: sourceFile,
 			}
 			h.saveConfig(key, cfg)
 		}
@@ -171,14 +197,16 @@ func (h *httpContext) MakeServers() ([]caddy.Server, error) {
 // new, empty one will be created.
 func GetConfig(c *caddy.Controller) *SiteConfig {
 	ctx := c.Context().(*httpContext)
-	if cfg, ok := ctx.keysToSiteConfigs[c.Key]; ok {
+	key := strings.ToLower(c.Key)
+	if cfg, ok := ctx.keysToSiteConfigs[key]; ok {
 		return cfg
 	}
 	// we should only get here during tests because directive
 	// actions typically skip the server blocks where we make
 	// the configs
-	ctx.saveConfig(c.Key, &SiteConfig{Root: Root, TLS: new(caddytls.Config)})
-	return GetConfig(c)
+	cfg := &SiteConfig{Root: Root, TLS: new(caddytls.Config)}
+	ctx.saveConfig(key, cfg)
+	return cfg
 }
 
 // shortCaddyfileLoader loads a Caddyfile if positional arguments are
@@ -391,6 +419,8 @@ var directives = []string{
 	// primitive actions that set up the fundamental vitals of each config
 	"root",
 	"bind",
+	"maxrequestbody", // TODO: 'limits'
+	"timeouts",
 	"tls",
 
 	// services/utilities, or other directives that don't necessarily inject handlers
@@ -405,33 +435,39 @@ var directives = []string{
 	"rewrite",
 	"ext",
 	"gzip",
+	"header",
 	"errors",
+	"filter",    // github.com/echocat/caddy-filter
 	"minify",    // github.com/hacdias/caddy-minify
 	"ipfilter",  // github.com/pyed/ipfilter
 	"ratelimit", // github.com/xuqingfeng/caddy-rate-limit
 	"search",    // github.com/pedronasser/caddy-search
-	"header",
+	"expires",   // github.com/epicagency/caddy-expires
+	"basicauth",
 	"redir",
 	"status",
 	"cors", // github.com/captncraig/cors/caddy
 	"mime",
-	"basicauth",
-	"jwt",    // github.com/BTBurke/caddy-jwt
-	"jsonp",  // github.com/pschlump/caddy-jsonp
-	"upload", // blitznote.com/src/caddy.upload
+	"jwt",       // github.com/BTBurke/caddy-jwt
+	"jsonp",     // github.com/pschlump/caddy-jsonp
+	"upload",    // blitznote.com/src/caddy.upload
+	"multipass", // github.com/namsral/multipass/caddy
 	"internal",
 	"pprof",
 	"expvar",
+	"prometheus", // github.com/miekg/caddy-prometheus
 	"proxy",
 	"fastcgi",
+	"cgi", // github.com/jung-kurt/caddy-cgi
+	"push",
 	"websocket",
+	"filemanager", // github.com/hacdias/caddy-filemanager
 	"markdown",
 	"templates",
 	"browse",
-	"filemanager", // github.com/hacdias/caddy-filemanager
-	"hugo",        // github.com/hacdias/caddy-hugo
-	"mailout",     // github.com/SchumacherFM/mailout
-	"prometheus",  // github.com/miekg/caddy-prometheus
+	"hugo",      // github.com/hacdias/caddy-hugo
+	"mailout",   // github.com/SchumacherFM/mailout
+	"awslambda", // github.com/coopernurse/caddy-awslambda
 }
 
 const (

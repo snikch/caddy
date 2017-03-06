@@ -23,7 +23,7 @@ func activateHTTPS(cctx caddy.Context) error {
 
 	// place certificates and keys on disk
 	for _, c := range ctx.siteConfigs {
-		err := c.TLS.ObtainCert(operatorPresent)
+		err := c.TLS.ObtainCert(c.TLS.Hostname, operatorPresent)
 		if err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func enableAutoHTTPS(configs []*SiteConfig, loadCertificates bool) error {
 		cfg.TLS.Enabled = true
 		cfg.Addr.Scheme = "https"
 		if loadCertificates && caddytls.HostQualifies(cfg.Addr.Host) {
-			_, err := caddytls.CacheManagedCertificate(cfg.Addr.Host, cfg.TLS)
+			_, err := cfg.TLS.CacheManagedCertificate(cfg.Addr.Host)
 			if err != nil {
 				return err
 			}
@@ -149,6 +149,7 @@ func redirPlaintextHost(cfg *SiteConfig) *SiteConfig {
 				toURL += ":" + redirPort
 			}
 			toURL += r.URL.RequestURI()
+			w.Header().Set("Connection", "close")
 			http.Redirect(w, r, toURL, http.StatusMovedPermanently)
 			return 0, nil
 		})

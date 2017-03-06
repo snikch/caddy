@@ -10,58 +10,78 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mholt/caddy"
 	"github.com/mholt/caddy/caddyhttp/httpserver"
 )
 
 func TestBasicAuth(t *testing.T) {
+	var i int
+	// This handler is registered for tests in which the only authorized user is
+	// "okuser"
+	upstreamHandler := func(w http.ResponseWriter, r *http.Request) (int, error) {
+		remoteUser, _ := r.Context().Value(caddy.CtxKey("remote_user")).(string)
+		if remoteUser != "okuser" {
+			t.Errorf("Test %d: expecting remote user 'okuser', got '%s'", i, remoteUser)
+		}
+		return http.StatusOK, nil
+	}
 	rw := BasicAuth{
-		Next: httpserver.HandlerFunc(contentHandler),
+		Next: httpserver.HandlerFunc(upstreamHandler),
 		Rules: []Rule{
-			{Username: "test", Password: PlainMatcher("ttest"), Resources: []string{"/testing"}},
+			{Username: "okuser", Password: PlainMatcher("okpass"), Resources: []string{"/testing"}},
 		},
 	}
 
-	tests := []struct {
-		from   string
-		result int
-		cred   string
-	}{
-		{"/testing", http.StatusUnauthorized, "ttest:test"},
-		{"/testing", http.StatusOK, "test:ttest"},
-		{"/testing", http.StatusUnauthorized, ""},
+	type testType struct {
+		from     string
+		result   int
+		user     string
+		password string
 	}
 
-	for i, test := range tests {
+	tests := []testType{
+		{"/testing", http.StatusOK, "okuser", "okpass"},
+		{"/testing", http.StatusUnauthorized, "baduser", "okpass"},
+		{"/testing", http.StatusUnauthorized, "okuser", "badpass"},
+		{"/testing", http.StatusUnauthorized, "OKuser", "okpass"},
+		{"/testing", http.StatusUnauthorized, "OKuser", "badPASS"},
+		{"/testing", http.StatusUnauthorized, "", "okpass"},
+		{"/testing", http.StatusUnauthorized, "okuser", ""},
+		{"/testing", http.StatusUnauthorized, "", ""},
+	}
 
+	var test testType
+	for i, test = range tests {
 		req, err := http.NewRequest("GET", test.from, nil)
 		if err != nil {
-			t.Fatalf("Test %d: Could not create HTTP request %v", i, err)
+			t.Fatalf("Test %d: Could not create HTTP request: %v", i, err)
 		}
-		auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(test.cred))
-		req.Header.Set("Authorization", auth)
+		req.SetBasicAuth(test.user, test.password)
 
 		rec := httptest.NewRecorder()
 		result, err := rw.ServeHTTP(rec, req)
 		if err != nil {
-			t.Fatalf("Test %d: Could not ServeHTTP %v", i, err)
+			t.Fatalf("Test %d: Could not ServeHTTP: %v", i, err)
 		}
 		if result != test.result {
-			t.Errorf("Test %d: Expected Header '%d' but was '%d'",
+			t.Errorf("Test %d: Expected status code %d but was %d",
 				i, test.result, result)
 		}
-		if result == http.StatusUnauthorized {
+		if test.result == http.StatusUnauthorized {
 			headers := rec.Header()
 			if val, ok := headers["Www-Authenticate"]; ok {
-				if val[0] != "Basic realm=\"Restricted\"" {
-					t.Errorf("Test %d, Www-Authenticate should be %s provided %s", i, "Basic", val[0])
+				if got, want := val[0], "Basic realm=\"Restricted\""; got != want {
+					t.Errorf("Test %d: Www-Authenticate header should be '%s', got: '%s'", i, want, got)
 				}
 			} else {
-				t.Errorf("Test %d, should provide a header Www-Authenticate", i)
+				t.Errorf("Test %d: response should have a 'Www-Authenticate' header", i)
+			}
+		} else {
+			if got, want := req.Header.Get("Authorization"), ""; got != want {
+				t.Errorf("Test %d: Expected Authorization header to be stripped from request after successful authentication, but is: %s", i, got)
 			}
 		}
-
 	}
-
 }
 
 func TestMultipleOverlappingRules(t *testing.T) {

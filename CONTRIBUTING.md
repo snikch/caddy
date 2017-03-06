@@ -65,7 +65,7 @@ Don't worry, that won't happen without an open discussion first.
 
 If you are going to spend significant time writing code for a new pull request,
 best to open an issue to "claim" it and get feedback before you invest a lot of
-time. Not all pull requests are merged, and that's okay.
+time. Not all pull requests are merged, and that's okay,
 [Read why.](https://github.com/turbolinks/turbolinks/pull/124#issuecomment-239826060)
 
 Remember: pull requests should always be thoroughly documented both via godoc
@@ -99,7 +99,9 @@ one collaborator who did not open the pull request before merging. This will
 help ensure high code quality as new collaborators are added to the project.
 
 Read [CodeReviewComments](https://github.com/golang/go/wiki/CodeReviewComments)
-on the Go wiki for an idea of what we look for in good, clean Go code.
+on the Go wiki for an idea of what we look for in good, clean Go code, and
+check out [what Linus suggests](https://gist.github.com/matthewhudson/1475276)
+for good commit messages.
 
 
 

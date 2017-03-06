@@ -75,7 +75,7 @@ func (r *ResponseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := r.ResponseWriter.(http.Hijacker); ok {
 		return hj.Hijack()
 	}
-	return nil, nil, errors.New("not a Hijacker")
+	return nil, nil, NonHijackerError{Underlying: r.ResponseWriter}
 }
 
 // Flush implements http.Flusher. It simply wraps the underlying
@@ -84,7 +84,7 @@ func (r *ResponseRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	} else {
-		panic("not a Flusher") // should be recovered at the beginning of middleware stack
+		panic(NonFlusherError{Underlying: r.ResponseWriter}) // should be recovered at the beginning of middleware stack
 	}
 }
 
@@ -94,5 +94,20 @@ func (r *ResponseRecorder) CloseNotify() <-chan bool {
 	if cn, ok := r.ResponseWriter.(http.CloseNotifier); ok {
 		return cn.CloseNotify()
 	}
-	panic("not a CloseNotifier")
+	panic(NonCloseNotifierError{Underlying: r.ResponseWriter})
 }
+
+// Push resource to client
+func (r *ResponseRecorder) Push(target string, opts *http.PushOptions) error {
+	if pusher, hasPusher := r.ResponseWriter.(http.Pusher); hasPusher {
+		return pusher.Push(target, opts)
+	}
+
+	return errors.New("push is unavailable (probably chained http.ResponseWriter does not implement http.Pusher)")
+}
+
+// Interface guards
+var _ http.Pusher = (*ResponseRecorder)(nil)
+var _ http.Flusher = (*ResponseRecorder)(nil)
+var _ http.CloseNotifier = (*ResponseRecorder)(nil)
+var _ http.Hijacker = (*ResponseRecorder)(nil)

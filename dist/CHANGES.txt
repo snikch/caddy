@@ -1,5 +1,63 @@
 CHANGES
 
+0.9.5 (January 24, 2017)
+- New -validate flag to only check a Caddyfile, then exit
+- New {when_iso} placeholder for timestamp ISO 8601 in UTC
+- New {rewrite_path} and {rewrite_path_escaped} placeholders
+- New 'timeouts' directive to configure or disable HTTP timeouts
+- HTTP-level timeouts enabled by default
+- basicauth: Authorization header stripped upon successful login
+- browse: Added textbox to filter listing in default template
+- browse: Sanitize file names and links in default template
+- browse: Ensure active Caddyfile is hidden regardless of cwd
+- fastcgi: New 'root' property, mainly for use with containers
+- markdown: Apply some front matter fields as <meta> tags
+- proxy: Fixed HTTP/2 upstream to backend; honors -http CLI flag
+- proxy: Fixed websockets over HTTPS
+- proxy: Reduced memory usage and improved performance
+- proxy: Added support for HTTP trailers
+- tls: Fixed deadlock that affected some background renewals
+- Several other smaller bugs squashed and improvements made
+
+
+0.9.4 (December 21, 2016)
+- Updated QUIC
+- New maxrequestbody directive to limit size of request body
+- New {latency_ms} placeholder for latency always in ms
+- Serve statically compressed .gz and .br files
+- fastcgi: Support for multiple backends with basic load balancing
+- proxy: Fixed handling of encoded 'without' paths
+- proxy: Preserve trailing slash if present in request
+- proxy: Fix HTTP/2 upstreams
+- templates: New .Files action to list files in a directory
+- templates: .Include can now pass arguments to included file
+- tls: Added ability to customize preferred curves
+- tls: Added support for Must-Staple on managed certificates
+- tls: Fixed subtle edge case bug with TLS-SNI challenge
+- Lots of minor fixes and improvements
+
+
+0.9.3 (September 28, 2016)
+- Updated QUIC to newer version
+- import: Glob pattern matching 0 files is no longer an error
+- fastcgi: Fixed persistent connections (disabled by default)
+- fastcgi: Configurable connection pool size parameter
+- proxy: Improved failover load balancing logic
+- proxy: Avoids duplicating header fields that would be confusing
+- proxy: New try_duration and try_interval parameters
+- proxy: Fix for IP hash policy when downed hosts come back up
+- Several other bug fixes and new tests
+
+
+0.9.2 (September 20, 2016)
+- New -catimeout option to customize ACME CA HTTP timeout
+- import: Fix nested import absolute/relative paths
+- log: Fix multiple log outputs
+- proxy: Fix for keepalive in certain cases
+- tls: Fix for PreferServerCipherSuites
+- Numerous other bug fixes and internal improvements
+
+
 0.9.1 (August 17, 2016)
 - New {request_body} placeholder to log request body
 - {remote} placeholder no longer uses X-Forwarded-For header
